@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>進階手勢控制：多種形狀與縮放</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: sans-serif; }
+    #video-container {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      width: 200px;
+      border: 2px solid #ff007b;
+      border-radius: 10px;
+      transform: scaleX(-1);
+    }
+    #ui {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: white;
+      z-index: 10;
+      background: rgba(0,0,0,0.5);
+      padding: 15px;
+      border-radius: 8px;
+    }
+    .hint { font-size: 0.8rem; color: #aaa; margin-top: 5px; }
+  </style>
+</head>
+<body>
+
+  <div id="ui">
+    <div id="status">模型載入中...</div>
+    <div id="shape-name">目前形狀：方塊</div>
+    <div class="hint">👌 捏合：縮放 | 👆 移動：旋轉 | ↔️ 左右移動切換形狀</div>
+  </div>
+  
+  <video id="input_video" style="display:none"></video>
+  <canvas id="video-preview"></canvas>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <script>
+    const videoElement = document.getElementById('input_video');
+    const statusDiv = document.getElementById('status');
+    const shapeDiv = document.getElementById('shape-name');
+
+    // --- 1. Three.js 場景設定 ---
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // 建立多個形狀
+    const shapes = [];
+    const mat = new THREE.MeshNormalMaterial();
+
+    shapes.push(new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), mat));          // 方塊
+    shapes.push(new THREE.Mesh(new THREE.SphereGeometry(1.5, 32, 32), mat));   // 球體
+    shapes.push(new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 2, 32), mat)); // 圓柱
+    shapes.push(new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.5, 16, 100), mat)); // 甜甜圈
+
+    let currentIdx = 0;
+    let currentMesh = shapes[currentIdx];
+    scene.add(currentMesh);
+    
+    camera.position.z = 5;
+
+    // 計算兩點間距離的函數
+    function getDistance(p1, p2) {
+      return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+    }
+
+    // --- 2. MediaPipe 手勢處理 ---
+    let lastSwitchTime = 0;
+
+    function onResults(results) {
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        statusDiv.innerText = "手勢控制中...";
+        const hand = results.multiHandLandmarks[0];
+
+        const thumbTip = hand[4];  // 大拇指尖
+        const indexTip = hand[8];  // 食指尖
+
+        // A. 旋轉：根據食指位置
+        currentMesh.rotation.y = (indexTip.x - 0.5) * 10;
+        currentMesh.rotation.x = (indexTip.y - 0.5) * 10;
+
+        // B. 縮放：根據大拇指與食指的距離
+        const distance = getDistance(thumbTip, indexTip);
+        const scale = Math.max(0.2, distance * 10); // 最小縮放 0.2，放大倍率 10
+        currentMesh.scale.set(scale, scale, scale);
+
+        // C. 切換形狀：手移到最左或最右 (需間隔一秒避免噴發)
+        const now = Date.now();
+        if (now - lastSwitchTime > 1000) {
+          if (indexTip.x < 0.1 || indexTip.x > 0.9) {
+            scene.remove(currentMesh);
+            currentIdx = (currentIdx + 1) % shapes.length;
+            currentMesh = shapes[currentIdx];
+            scene.add(currentMesh);
+            
+            const names = ["方塊", "球體", "圓柱", "甜甜圈"];
+            shapeDiv.innerText = `目前形狀：${names[currentIdx]}`;
+            lastSwitchTime = now;
+          }
+        }
+      } else {
+        statusDiv.innerText = "請秀出手掌";
+      }
+      renderer.render(scene, camera);
+    }
+
+    // --- 3. 初始化 MediaPipe ---
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.75,
+      minTrackingConfidence: 0.75
+    });
+    hands.onResults(onResults);
+
+    const cameraHelper = new Camera(videoElement, {
+      onFrame: async () => {
+        await hands.send({image: videoElement});
+      },
+      width: 640, height: 480
+    });
+    cameraHelper.start();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
